@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Fox's Gem Hunt</title>
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <style>
+        #gameCanvas {
+            border: 1px solid black;
+        }
+        #menuOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 600px;
+            height: 600px;
+            background-color: rgba(255, 255, 255, 0.9);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            z-index: 1;
+        }
+        #menuOverlay button {
+            margin: 10px;
+            padding: 15px 30px;
+            font-size: 20px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="600" height="600"></canvas>
+    <div id="menuOverlay">
+        <h1>Click to Start</h1>
+        <!--<button id="keyboardButton">Keyboard</button>
+        <button id="mouseButton">Mouse</button>-->
+        <button id="computerButton">Computer (AI)</button>
+    </div>
+
+    <script>
+        // Get canvas and context
+        // Get canvas and context
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+let fox; // Declare as a global variable
+let audioContext; // Declare audioContext globally
+
+// Game settings
+const WIDTH = 600;
+const HEIGHT = 600;
+
+const BACKGROUND_COLORS = [
+    'rgb(255, 255, 255)', // White
+    'rgb(240, 248, 255)', // AliceBlue
+    'rgb(245, 245, 220)', // Beige
+    'rgb(230, 230, 250)', // Lavender
+    'rgb(255, 228, 225)', // MistyRose
+    'rgb(255, 250, 205)', // LemonChiffon
+    'rgb(240, 255, 240)', // Honeydew
+    'rgb(255, 240, 245)', // LavenderBlush
+    'rgb(245, 255, 250)', // MintCream
+    'rgb(250, 240, 230)', // Linen
+];
+
+const FPS = 60;
+const FOX_SIZE = 40;
+const GEM_SIZE = 30;
+const OBSTACLE_SIZE = 30;
+const EXTRA_LIFE_SIZE = 30;
+const START_NUM_OBSTACLES = 5;
+const INVINCIBILITY_DURATION = 3; // Increased to 3 seconds
+const MIN_DISTANCE_BETWEEN_GEM_AND_HEART = 100; // Minimum distance between gem and heart
+
+let startTime;
+let elapsedTime = 0;
+let recordTime = null;
+let MAX_LEVEL = 10; // Default maximum level
+
+// Function to get the number of levels from the URL parameter
+function getLevelsFromURL() {
+    const params = new URLSearchParams(window.location.search);
+    const levels = params.get('xlvlx');
+    return levels ? parseInt(levels) : MAX_LEVEL; // If no parameter is set, use default MAX_LEVEL
+}
+
+// Set the maximum levels based on URL parameter
+MAX_LEVEL = getLevelsFromURL();
+
+// Load images
+let foxImage = new Image();
+foxImage.src = 'fox.png';
+
+let gemImage = new Image();
+gemImage.src = 'diamond.png';
+
+let obstacleImage = new Image();
+obstacleImage.src = 'block.png';
+
+let extraLifeImage = new Image();
+extraLifeImage.src = 'heart.png';
+
+// Ensure images are loaded before starting
+let imagesLoaded = 0;
+const totalImages = 4;
+
+foxImage.onload = imageLoaded;
+gemImage.onload = imageLoaded;
+obstacleImage.onload = imageLoaded;
+extraLifeImage.onload = imageLoaded;
+
+function imageLoaded() {
+    imagesLoaded++;
+    if (imagesLoaded === totalImages) {
+        document.getElementById('menuOverlay').style.display = 'flex';
+    }
+}
+
+// Game entities
+class Fox {
+    constructor() {
+        this.width = FOX_SIZE;
+        this.height = FOX_SIZE;
+        this.x = 0;
+        this.y = 0;
+        this.baseVel = 3; // Base speed of the fox
+        this.maxVel = 10; // Maximum speed of the fox
+        this.vel = this.baseVel; // Current speed initialized to base speed
+        this.score = 0;
+        this.lives = 3; // Initial lives
+        this.invincible = false;
+        this.invincibleStartTime = 0;
+        this.target = null;
+        this.canLevelUp = false; // Initialize as not able to level up
+        this.stuckCounter = 0; // Counter to detect if the fox is stuck
+        this.lastPosition = { x: 0, y: 0 }; // Store the last position to check movement
+    }
+
+    resetPosition(obstacles) {
+        let distanceThreshold = 150; // Ensure safe starting position
+        while (true) {
+            this.x = Math.floor(Math.random() * (WIDTH - this.width));
+            this.y = Math.floor(Math.random() * (HEIGHT - this.height));
+            if (isPositionSafe(this.x, this.y, obstacles, distanceThreshold)) {
+                break;
+            }
+        }
+        this.lastPosition = { x: this.x, y: this.y };
+    }
+
+    moveTowardsTarget(obstacles, gem) {
+    if (!this.target) return;
+
+    let dx = this.target.x - this.x;
+    let dy = this.target.y - this.y;
+    let distance = Math.hypot(dx, dy);
+
+    // Adjust speed: maximize speed if the fox has 15 lives or is invincible
+    if (this.lives >= 10 || this.invincible) {
+        this.vel = this.maxVel; // Use maximum speed
+    } else {
+        this.vel = Math.min(this.baseVel + (distance / 100), this.maxVel); // Adjust speed normally
+    }
+
+    // Normalize direction
+    let dirX = dx / distance;
+    let dirY = dy / distance;
+
+    // Avoid obstacles unless invincible
+    if (!this.invincible) {
+        let avoidX = 0;
+        let avoidY = 0;
+        let avoidanceStrength = this.getAvoidanceStrength();
+
+        // Avoid obstacles
+        for (let obstacle of obstacles) {
+            let distX = (obstacle.x + obstacle.size / 2) - (this.x + this.width / 2);
+            let distY = (obstacle.y + obstacle.size / 2) - (this.y + this.height / 2);
+            let dist = Math.hypot(distX, distY);
+
+            if (dist < 60) { // Adjusted distance threshold to 60
+                let repulsion = avoidanceStrength / (dist * dist);
+                avoidX -= repulsion * distX;
+                avoidY -= repulsion * distY;
+            }
+        }
+
+        // Avoid gem if cannot level up
+        if (!this.canLevelUp && gem) {
+            let distX = (gem.x + gem.size / 2) - (this.x + this.width / 2);
+            let distY = (gem.y + gem.size / 2) - (this.y + this.height / 2);
+            let dist = Math.hypot(distX, distY);
+
+            if (dist < 60) { // Adjust distance as needed to 60
+                let repulsion = avoidanceStrength / (dist * dist);
+                avoidX -= repulsion * distX;
+                avoidY -= repulsion * distY;
+            }
+        }
+
+        // Combine direction and avoidance vectors
+        dirX += avoidX;
+        dirY += avoidY;
+    }
+
+    // Normalize adjusted direction
+    let dirLength = Math.hypot(dirX, dirY);
+    if (dirLength === 0) {
+        dirX = 0;
+        dirY = 0;
+    } else {
+        dirX /= dirLength;
+        dirY /= dirLength;
+    }
+
+    // Move fox
+    this.x += dirX * this.vel;
+    this.y += dirY * this.vel;
+
+    // Keep fox within bounds
+    this.x = Math.max(0, Math.min(this.x, WIDTH - this.width));
+    this.y = Math.max(0, Math.min(this.y, HEIGHT - this.height));
+
+    // Update lastPosition after moving
+    this.lastPosition = { x: this.x, y: this.y };
+}
+
+
+    getAvoidanceStrength() {
+        let baseStrength = 8000;
+        if (this.lives >= 10) {
+            return baseStrength * 0.5; // Less cautious if many lives
+        } else if (this.lives <= 5) {
+            return baseStrength * 2; // More cautious if few lives
+        } else {
+            return baseStrength;
+        }
+    }
+
+    checkInvincibility() {
+        if (this.invincible) {
+            let currentTime = Date.now();
+            if (currentTime - this.invincibleStartTime >= INVINCIBILITY_DURATION * 1000) {
+                this.invincible = false;
+            }
+        }
+    }
+
+    draw(ctx) {
+        if (this.invincible) {
+            // Blink effect during invincibility
+            if (Math.floor(Date.now() / 250) % 2 === 0) {
+                ctx.drawImage(foxImage, this.x, this.y, this.width, this.height);
+            }
+        } else {
+            ctx.drawImage(foxImage, this.x, this.y, this.width, this.height);
+        }
+    }
+}
+
+class Gem {
+    constructor() {
+        this.size = GEM_SIZE;
+        this.placeGem();
+    }
+
+    placeGem(extraLife) {
+        while (true) {
+            this.x = Math.floor(Math.random() * (WIDTH - this.size));
+            this.y = Math.floor(Math.random() * (HEIGHT - this.size - 50));
+
+            // Check if gem is too close to extra life
+            if (extraLife) {
+                let dist = Math.hypot(
+                    this.x - extraLife.x,
+                    this.y - extraLife.y
+                );
+                if (dist < MIN_DISTANCE_BETWEEN_GEM_AND_HEART) {
+                    continue; // Reposition gem
+                }
+            }
+            break; // Suitable position found
+        }
+    }
+
+    draw(ctx) {
+        ctx.drawImage(gemImage, this.x, this.y, this.size, this.size);
+    }
+}
+
+class ExtraLife {
+    constructor(gem) {
+        this.size = EXTRA_LIFE_SIZE;
+        this.placeExtraLife(gem);
+    }
+
+    placeExtraLife(gem) {
+        while (true) {
+            this.x = Math.floor(Math.random() * (WIDTH - this.size));
+            this.y = Math.floor(Math.random() * (HEIGHT - this.size - 50));
+
+            // Check if extra life is too close to gem
+            if (gem) {
+                let dist = Math.hypot(
+                    this.x - gem.x,
+                    this.y - gem.y
+                );
+                if (dist < MIN_DISTANCE_BETWEEN_GEM_AND_HEART) {
+                    continue; // Reposition extra life
+                }
+            }
+            break; // Suitable position found
+        }
+    }
+
+    draw(ctx) {
+        ctx.drawImage(extraLifeImage, this.x, this.y, this.size, this.size);
+    }
+}
+
+class Obstacle {
+    constructor(speed) {
+        this.size = OBSTACLE_SIZE;
+        do {
+            this.x = Math.floor(Math.random() * (WIDTH - this.size));
+            this.y = Math.floor(Math.random() * (HEIGHT - this.size - 100) + 50);
+        } while (!isPositionSafe(this.x, this.y, [], 150)); // Ensure obstacles aren't near fox's start position
+        this.speed = speed;
+        this.dirX = Math.random() < 0.5 ? -1 : 1;
+        this.dirY = Math.random() < 0.5 ? -1 : 1;
+    }
+
+    move() {
+        this.x += this.dirX * this.speed;
+        this.y += this.dirY * this.speed;
+
+        if (this.x <= 0 || this.x + this.size >= WIDTH) {
+            this.dirX *= -1;
+        }
+        if (this.y <= 50 || this.y + this.size >= HEIGHT) {
+            this.dirY *= -1;
+        }
+    }
+
+    draw(ctx) {
+        ctx.drawImage(obstacleImage, this.x, this.y, this.size, this.size);
+    }
+}
+
+// Utility functions
+function isPositionSafe(x, y, obstacles, distanceThreshold) {
+    for (let obstacle of obstacles) {
+        if (Math.abs(x - obstacle.x) < distanceThreshold &&
+            Math.abs(y - obstacle.y) < distanceThreshold) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function rectsOverlap(x1, y1, w1, h1, x2, y2, w2, h2) {
+    return !(x1 + w1 < x2 || x1 > x2 + w2 ||
+             y1 + h1 < y2 || y1 > y2 + h2);
+}
+
+// Control method selection
+let controlMethod = null;
+
+/*
+document.getElementById('keyboardButton').addEventListener('click', () => {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)(); // Create AudioContext on user interaction
+    } else if (audioContext.state === 'suspended') {
+        audioContext.resume(); // Resume AudioContext if suspended
+    }
+    controlMethod = 'keyboard';
+    document.getElementById('menuOverlay').style.display = 'none';
+    startGame();
+});
+
+document.getElementById('mouseButton').addEventListener('click', () => {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)(); // Create AudioContext on user interaction
+    } else if (audioContext.state === 'suspended') {
+        audioContext.resume(); // Resume AudioContext if suspended
+    }
+    controlMethod = 'mouse';
+    document.getElementById('menuOverlay').style.display = 'none';
+    startGame();
+});
+*/
+
+document.getElementById('computerButton').addEventListener('click', () => {
+    if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)(); // Create AudioContext on user interaction
+    } else if (audioContext.state === 'suspended') {
+        audioContext.resume(); // Resume AudioContext if suspended
+    }
+    controlMethod = 'computer';
+    document.getElementById('menuOverlay').style.display = 'none';
+    startGame();
+});
+
+// Sound functions
+audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+function playTone(frequency, duration) {
+    if (!audioContext) return; // Ensure AudioContext exists
+    let oscillator = audioContext.createOscillator();
+    oscillator.type = 'sine';
+    oscillator.frequency.value = frequency;
+
+    let gainNode = audioContext.createGain();
+    gainNode.gain.value = 0.5;
+
+    oscillator.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+
+    oscillator.start();
+    oscillator.stop(audioContext.currentTime + duration);
+}
+
+// Game functions
+function startGame() {
+    fox = new Fox();
+    console.log(`Initial lives: ${fox.lives}`); // Debugging log to check initial lives
+
+    let gem = new Gem();
+    let level = 1;
+    let obstacles = [];
+    for (let i = 0; i < START_NUM_OBSTACLES + level; i++) {
+        obstacles.push(new Obstacle(level * 0.3)); // Reduced speed for level 1
+    }
+    fox.resetPosition(obstacles);
+
+    let extraLife = null;
+    let nextExtraLifeTime = Date.now() + 10000;
+
+    let keysPressed = {};
+    let mousePos = { x: WIDTH / 2, y: HEIGHT / 2 };
+
+    startTime = Date.now();
+
+    if (controlMethod === 'computer') {
+        aiControl(fox, gem, obstacles, extraLife, level);
+    }
+
+    let lastTime = 0;
+
+    function gameLoop(timestamp) {
+        let deltaTime = timestamp - lastTime;
+        lastTime = timestamp;
+
+        fox.checkInvincibility();
+
+        let currentTime = Date.now();
+        elapsedTime = currentTime - startTime;
+
+        // Handle extra life spawning
+        if (extraLife === null && currentTime >= nextExtraLifeTime) {
+            extraLife = new ExtraLife(gem);
+        }
+
+        if (controlMethod === 'computer') {
+            aiControl(fox, gem, obstacles, extraLife, level);
+        }
+
+        // Move obstacles
+        for (let obstacle of obstacles) {
+            obstacle.move();
+        }
+
+        // Check collision with gem
+        if (rectsOverlap(fox.x, fox.y, fox.width, fox.height,
+                         gem.x, gem.y, gem.size, gem.size)) {
+            fox.score += 1;
+            playTone(250.56, 0.2);
+            gem.placeGem(extraLife);
+
+            // Check for level up
+            if (fox.score % 5 === 0) {
+                if (level !== 1 || fox.lives >= 10) {
+                    level += 1;
+                    console.log(`Leveling up to Level ${level}`);
+                    if (level > MAX_LEVEL) {
+                        winScreen();
+                        return;
+                    }
+                    for (let i = 0; i < 2; i++) {
+                        obstacles.push(new Obstacle(level * 0.5));
+                    }
+                    for (let obstacle of obstacles) {
+                        obstacle.speed = Math.min(level * 0.5, 5); // Cap speed at 5
+                    }
+                } else {
+                    // Do not level up yet
+                    fox.canLevelUp = false;
+                }
+            }
+        }
+
+        // Check collision with extra life
+        if (extraLife !== null) {
+            if (rectsOverlap(fox.x, fox.y, fox.width, fox.height,
+                             extraLife.x, extraLife.y, extraLife.size, extraLife.size)) {
+                fox.lives += 1;
+                playTone(501.12, 0.2);
+                extraLife = null;
+                nextExtraLifeTime = currentTime + 10000;
+                console.log(`Lives after getting extra life: ${fox.lives}`); // Debugging log
+            }
+        }
+
+        // Check collision with obstacles
+        let collision = false;
+        for (let obstacle of obstacles) {
+            if (rectsOverlap(fox.x, fox.y, fox.width, fox.height,
+                             obstacle.x, obstacle.y, obstacle.size, obstacle.size)) {
+                collision = true;
+                break;
+            }
+        }
+
+        if (collision) {
+            if (!fox.invincible) {
+                fox.lives -= 1;
+                console.log(`Fox hit! Lives remaining: ${fox.lives}`);
+                playTone(125.28, 0.5);
+                if (fox.lives <= 0) {
+                    gameOverScreen();
+                    return;
+                } else {
+                    fox.invincible = true;
+                    fox.invincibleStartTime = Date.now();
+                }
+            }
+        }
+
+        drawWindow(fox, gem, obstacles, level, extraLife);
+
+        requestAnimationFrame(gameLoop);
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+
+// AI Control Function
+function aiControl(fox, gem, obstacles, extraLife, level) {
+    let maxLives = 10; // Fox will collect up to 15 lives
+
+    // Determine if the fox can level up
+    if (level === 1 && fox.score % 5 === 0 && fox.lives < maxLives) {
+        fox.canLevelUp = false; // Hold off on leveling up until 15 lives
+    } else {
+        fox.canLevelUp = true;
+    }
+
+    // Prioritize extra lives over gems
+    if (extraLife) {
+        // Target the extra life
+        fox.target = { x: extraLife.x, y: extraLife.y };
+    } else if (fox.lives < maxLives) {
+        // If not at maxLives and no extra life, avoid leveling up
+        if (!fox.canLevelUp) {
+            fox.target = getSafeSpot(obstacles);
+        } else {
+            // Continue collecting gems
+            fox.target = { x: gem.x, y: gem.y };
+        }
+    } else if (!fox.canLevelUp) {
+        // Avoid collecting the 5th gem in level 1
+        fox.target = getSafeSpot(obstacles);
+    } else {
+        // Focus on gems
+        fox.target = { x: gem.x, y: gem.y };
+    }
+
+    // Be more aggressive during invincibility
+    if (fox.invincible) {
+        fox.getAvoidanceStrength = function() { return 0; }; // No avoidance when invincible
+    } else {
+        fox.getAvoidanceStrength = Fox.prototype.getAvoidanceStrength; // Normal behavior
+    }
+
+    // Move towards the target while avoiding obstacles and gem if necessary
+    fox.moveTowardsTarget(obstacles, gem);
+}
+
+function getSafeSpot(obstacles) {
+    // Find a position that is farthest from all obstacles
+    let maxDistance = 0;
+    let safeX = WIDTH / 2;
+    let safeY = HEIGHT / 2;
+
+    for (let i = 0; i < 10; i++) {
+        let x = Math.random() * (WIDTH - FOX_SIZE);
+        let y = Math.random() * (HEIGHT - FOX_SIZE);
+        let minDist = Infinity;
+
+        for (let obstacle of obstacles) {
+            let dist = Math.hypot(x - obstacle.x, y - obstacle.y);
+            if (dist < minDist) {
+                minDist = dist;
+            }
+        }
+
+        if (minDist > maxDistance) {
+            maxDistance = minDist;
+            safeX = x;
+            safeY = y;
+        }
+    }
+
+    return { x: safeX, y: safeY };
+}
+
+// Handle touch input
+function handleTouch(event) {
+    event.preventDefault();
+    let touch = event.touches[0];
+    let rect = canvas.getBoundingClientRect();
+    let mousePos = {
+        x: touch.clientX - rect.left,
+        y: touch.clientY - rect.top
+    };
+    fox.moveMouse(mousePos);
+}
+
+function drawWindow(fox, gem, obstacles, level, extraLife) {
+    let bgColor = BACKGROUND_COLORS[(level - 1) % BACKGROUND_COLORS.length];
+    ctx.fillStyle = bgColor;
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+    fox.draw(ctx);
+    gem.draw(ctx);
+    if (extraLife !== null) {
+        extraLife.draw(ctx);
+    }
+    for (let obstacle of obstacles) {
+        obstacle.draw(ctx);
+    }
+
+    ctx.fillStyle = 'black';
+    ctx.font = '20px Arial';
+    ctx.fillText(`Score: ${fox.score}`, 10, 20);
+    ctx.fillText(`Level: ${level}`, WIDTH - 100, 20);
+    ctx.fillText(`Lives: ${fox.lives}`, 10, 50);
+
+    // Show elapsed time
+    const minutes = Math.floor(elapsedTime / 60000);
+    const seconds = Math.floor((elapsedTime % 60000) / 1000);
+    ctx.fillText(`Time: ${minutes}m ${seconds}s`, WIDTH / 2 - 50, 20);
+}
+
+function gameOverScreen() {
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    ctx.fillStyle = 'rgb(200, 0, 0)';
+    ctx.font = '50px Arial';
+    let text = 'GAME OVER';
+    let textWidth = ctx.measureText(text).width;
+    ctx.fillText(text, WIDTH / 2 - textWidth / 2, HEIGHT / 2);
+}
+
+function winScreen() {
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, WIDTH, HEIGHT);
+    ctx.fillStyle = 'rgb(0, 200, 0)';
+    ctx.font = '50px Arial';
+    let text = 'YOU WIN!';
+    let textWidth = ctx.measureText(text).width;
+    ctx.fillText(text, WIDTH / 2 - textWidth / 2, HEIGHT / 2);
+
+    // Show time and score
+    const minutes = Math.floor(elapsedTime / 60000);
+    const seconds = Math.floor((elapsedTime % 60000) / 1000);
+    let timeText = `Time: ${minutes}m ${seconds}s`;
+    ctx.fillText(timeText, WIDTH / 2 - ctx.measureText(timeText).width / 2, HEIGHT / 2 + 60);
+
+    let scoreText = `Score: ${fox.score}`;
+    ctx.fillText(scoreText, WIDTH / 2 - ctx.measureText(scoreText).width / 2, HEIGHT / 2 + 100);
+
+    // Send the time to the server for recording
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', 'record_time.php', true);
+    xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+    xhr.onload = function() {
+        console.log('Response from PHP:', xhr.responseText); // Debugging log
+        if (xhr.responseText.includes('New Record')) {
+            ctx.fillText('New Record!', WIDTH / 2 - ctx.measureText('New Record!').width / 2, HEIGHT / 2 + 140);
+        } else if (xhr.responseText.includes('Record Time')) {
+            const recordTimeText = xhr.responseText.split('Record Time:')[1].trim(); // Extract the formatted time
+            ctx.fillText(`Record Time: ${recordTimeText}`, WIDTH / 2 - ctx.measureText(`Record Time: ${recordTimeText}`).width / 2, HEIGHT / 2 + 140);
+        }
+    };
+    xhr.send(`time=${elapsedTime}`);
+}
+    </script>
+</body>
+</html>

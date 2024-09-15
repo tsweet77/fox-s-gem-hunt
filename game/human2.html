@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Fox's Gem Hunt</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"> <!-- Added viewport meta tag -->
+    <style>
+        #gameCanvas {
+            width: 100%;           /* Allow the canvas to take up full available width */
+            max-width: 600px;      /* Do not exceed 600px width */
+            height: auto;          /* Automatically adjust height to maintain aspect ratio */
+            aspect-ratio: 1 / 1;   /* Ensure the canvas remains square */
+            border: 1px solid black;
+            display: block;
+            margin: 0 auto;
+            background-color: white;
+            overflow: hidden;
+        }
+
+        #menuOverlay {
+            position: fixed; /* Changed to fixed to cover the viewport */
+            top: 0;
+            left: 0;
+            width: 100%; /* Full width for responsiveness */
+            height: 100%; /* Full height for responsiveness */
+            background-color: rgba(255, 255, 255, 0.9);
+            display: flex; /* Ensure flex display is active */
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            z-index: 1;
+        }
+        #menuOverlay button {
+            margin: 10px;
+            padding: 15px 30px;
+            font-size: 20px;
+            width: 80%; /* Responsive width */
+            max-width: 300px; /* Prevent excessive width on larger screens */
+        }
+        /* Responsive adjustments for smaller screens */
+        @media (max-width: 640px) {
+            #menuOverlay button {
+                width: 90%;
+                padding: 10px 20px;
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas" width="600" height="600"></canvas>
+    <div id="menuOverlay">
+        <h1>Click to Start</h1>
+        <button id="keyboardButton">Keyboard</button>
+        <button id="mouseButton">Mouse</button>
+        <button id="phoneButton">Phone</button> <!-- Ensure this button is present and not commented out -->
+    </div>
+
+    <!-- Cache Busting Script -->
+    <script>
+        // Option 1: Manual Versioning
+        // const script = document.createElement('script');
+        // script.src = `game.js?v=1.0.3`; // Increment version as needed
+        // document.body.appendChild(script);
+
+        // Option 2: Automatic Timestamping (use during development)
+        const script = document.createElement('script');
+        script.src = `game2.js?ts=${new Date().getTime()}`; // Appends current timestamp
+        document.body.appendChild(script);
+    </script>
+</body>
+</html>
